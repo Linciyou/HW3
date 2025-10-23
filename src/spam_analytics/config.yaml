@@ -1,0 +1,52 @@
+paths:
+  dataset: dataset.csv
+  artifacts_dir: artifacts
+  reports_dir: reports
+
+preprocessing:
+  lowercase: true
+  strip_urls: true
+  strip_html: true
+  strip_emails: true
+  strip_numbers: true
+  strip_punctuation: true
+  strip_accents: true
+  collapse_whitespace: true
+  min_token_length: 2
+  use_stemmer: true
+  stop_words: english
+  extra_stop_words: []
+  keep_internal_digits: false
+
+vectorizer:
+  ngram_range: [1, 2]
+  analyzer: word
+  max_df: 0.95
+  min_df: 2
+  max_features: 20000
+  sublinear_tf: true
+  norm: l2
+
+model:
+  penalty: l2
+  C: 1.0
+  solver: lbfgs
+  max_iter: 1000
+  class_weight: balanced
+  random_state: 42
+
+training:
+  test_size: 0.2
+  random_state: 42
+  stratify: true
+  report_top_features: 25
+
+numeric_features:
+  - char_count
+  - word_count
+  - avg_word_len
+  - digit_ratio
+  - punct_ratio
+  - upper_ratio
+  - unique_char_ratio
+
