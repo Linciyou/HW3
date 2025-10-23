@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import sys
 
@@ -20,6 +20,8 @@ from spam_analytics.config import Config, load_config
 from spam_analytics.data import DataRepository
 from spam_analytics.modeling import ModelTrainer, extract_top_features
 from spam_analytics.preprocessing import TextPreprocessor
+from spam_analytics.evaluation import evaluate_pipeline, save_metrics
+from spam_analytics.visualization import refresh_static_reports
 
 try:
     import plotly.express as px
@@ -60,35 +62,82 @@ def load_preprocessed_data(config: Config) -> pd.DataFrame:
     return result.data
 
 
-@st.cache_resource(show_spinner=False)
-def load_trained_pipeline(config: Config, model_signature: float):
-    """Load the persisted model pipeline if it exists."""
-    if model_signature <= 0.0:
-        return None
-    trainer = ModelTrainer(config)
-    try:
-        return trainer.load_existing()
-    except FileNotFoundError:
-        return None
-
-
-def load_metrics(config: Config) -> Dict:
+def _load_metrics_file(config: Config) -> Dict[str, Any]:
     metrics_path = config.paths.metrics_path
     if not metrics_path.exists():
         return {}
-    with metrics_path.open("r", encoding="utf-8") as fh:
-        return json.load(fh)
-
-
-def get_model_signature(config: Config) -> float:
-    """Return a value that changes whenever the persisted model updates."""
-    model_path = config.paths.model_path
-    if not model_path.exists():
-        return 0.0
     try:
-        return model_path.stat().st_mtime
-    except OSError:
-        return 0.0
+        with metrics_path.open("r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _prepare_split(config: Config, processed_df: pd.DataFrame):
+    repo = DataRepository(config)
+    feature_columns = ["clean_text", *config.numeric_features]
+    features = processed_df[feature_columns]
+    target = processed_df["label"]
+    return repo.split(features, target)
+
+
+def _extract_top_features_safe(pipeline, config: Config) -> Dict[str, pd.DataFrame]:
+    try:
+        return extract_top_features(pipeline, config.training.report_top_features)
+    except Exception:
+        return {}
+
+
+def _train_pipeline(config: Config, processed_df: pd.DataFrame):
+    bundle = _prepare_split(config, processed_df)
+    trainer = ModelTrainer(config)
+    pipeline = trainer.fit(bundle.train_X, bundle.train_y)
+    metrics = evaluate_pipeline(pipeline, bundle.test_X, bundle.test_y)
+    top_features = _extract_top_features_safe(pipeline, config)
+
+    try:
+        config.ensure_directories()
+        trainer.save(pipeline)
+        save_metrics(metrics, config)
+        refresh_static_reports(processed_df, metrics, top_features, config)
+    except Exception:
+        # Ignore persistence errors on read-only filesystems.
+        pass
+
+    return pipeline, metrics, top_features
+
+
+def ensure_model_assets(config: Config, processed_df: pd.DataFrame):
+    """
+    Ensure a trained model and evaluation metrics are available.
+
+    Returns (pipeline, metrics, top_features, trained_now).
+    """
+    config.ensure_directories()
+    trainer = ModelTrainer(config)
+
+    try:
+        pipeline = trainer.load_existing()
+    except FileNotFoundError:
+        pipeline = None
+
+    metrics = _load_metrics_file(config)
+    trained_now = False
+
+    if pipeline is None:
+        pipeline, metrics, top_features = _train_pipeline(config, processed_df)
+        trained_now = True
+    else:
+        if not metrics:
+            bundle = _prepare_split(config, processed_df)
+            metrics = evaluate_pipeline(pipeline, bundle.test_X, bundle.test_y)
+            try:
+                save_metrics(metrics, config)
+            except Exception:
+                pass
+        top_features = _extract_top_features_safe(pipeline, config)
+
+    return pipeline, metrics, top_features, trained_now
 
 
 def render_dataset_overview(df: pd.DataFrame) -> None:
@@ -196,18 +245,20 @@ def render_metrics(metrics: Dict) -> None:
         st.warning("Install plotly to view the ROC curve.")
 
 
-def render_top_features(pipeline, config: Config) -> None:
+def render_top_features(pipeline, config: Config, top_features: Dict[str, pd.DataFrame]) -> None:
     st.subheader("Top Indicative Tokens")
-    if pipeline is None:
+    if pipeline is None or not top_features:
         st.info("Train the model to view feature importance.")
         return
     if not PLOTLY_AVAILABLE:
         st.warning("Install plotly to visualize top tokens.")
         return
 
-    top_features = extract_top_features(pipeline, config.training.report_top_features)
-    spam_df = top_features["spam"]
-    ham_df = top_features["ham"]
+    spam_df = top_features.get("spam")
+    ham_df = top_features.get("ham")
+    if spam_df is None or ham_df is None or spam_df.empty or ham_df.empty:
+        st.info("Unable to extract top tokens from the current model.")
+        return
 
     spam_chart = px.bar(
         spam_df,
@@ -268,9 +319,10 @@ def main() -> None:
 
     config = load_app_config()
     df = load_preprocessed_data(config)
-    model_signature = get_model_signature(config)
-    pipeline = load_trained_pipeline(config, model_signature)
-    metrics = load_metrics(config)
+    with st.spinner("Preparing model artifacts..."):
+        pipeline, metrics, top_features, trained_now = ensure_model_assets(config, df)
+    if trained_now:
+        st.success("Trained a fresh model using the latest dataset.", icon="✅")
 
     if not PLOTLY_AVAILABLE:
         st.sidebar.warning("Plotly is missing. Install via `pip install plotly` or `pip install -e .` for full charts.")
@@ -278,7 +330,7 @@ def main() -> None:
     render_dataset_overview(df)
     render_preprocessing_preview(df)
     render_metrics(metrics)
-    render_top_features(pipeline, config)
+    render_top_features(pipeline, config, top_features)
     render_inference(pipeline, config)
 
 
