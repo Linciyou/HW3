@@ -10,7 +10,7 @@ authors = [
   { name = "HW3 Team" }
 ]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.9,!=3.9.7"
 dependencies = [
   "pandas>=2.1",
   "numpy>=1.25",
