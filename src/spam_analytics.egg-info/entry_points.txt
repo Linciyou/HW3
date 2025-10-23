@@ -1,0 +1,2 @@
+[console_scripts]
+spam-analytics = spam_analytics.cli:app

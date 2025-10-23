@@ -32,9 +32,20 @@ DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("config.yaml")
 
 
 def _resolve_config(config_path: Optional[Path]) -> Config:
-    if config_path is None:
-        return load_config(DEFAULT_CONFIG_PATH)
-    return load_config(config_path)
+    target_path: Optional[Path]
+    if config_path is not None:
+        target_path = config_path
+    elif DEFAULT_CONFIG_PATH.exists():
+        target_path = DEFAULT_CONFIG_PATH
+    else:
+        target_path = None
+
+    try:
+        return load_config(target_path)
+    except ImportError as exc:
+        if config_path is not None:
+            console.print(f"[yellow]{exc} Falling back to built-in defaults.[/]")
+        return load_config(None)
 
 
 @data_app.command("summary")
@@ -222,4 +233,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

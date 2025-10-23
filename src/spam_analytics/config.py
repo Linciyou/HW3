@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, is_dataclass
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Dict, Iterable, Tuple
 
-import yaml
+try:
+    _YAML = import_module("yaml")
+except ImportError:  # pragma: no cover - runtime guard
+    _YAML = None
 
 
 @dataclass
@@ -154,8 +158,14 @@ def load_config(path: Path | None = None) -> Config:
     if not path.exists():
         raise FileNotFoundError(f"Configuration file not found: {path}")
 
+    yaml_module = _ensure_yaml()
+    if yaml_module is None:
+        raise ImportError(
+            "PyYAML is required to load configuration files. Install it via `pip install pyyaml`."
+        )
+
     with path.open("r", encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh) or {}
+        raw = yaml_module.safe_load(fh) or {}
 
     _apply_updates(config, raw)
     return config
@@ -182,3 +192,14 @@ def _coerce_value(current: Any, value: Any) -> Any:
         return tuple(value)
     return value
 
+
+def _ensure_yaml():
+    """Return a yaml module instance, importing on demand."""
+    global _YAML
+    if _YAML is not None:
+        return _YAML
+    try:
+        _YAML = import_module("yaml")
+    except ImportError:  # pragma: no cover - runtime guard
+        _YAML = None
+    return _YAML

@@ -100,19 +100,24 @@ def extract_top_features(
     vectorizer: TfidfVectorizer = column_transformer.named_transformers_["text"]
     feature_names = vectorizer.get_feature_names_out()
     coefs = classifier.coef_[0]
+    feature_count = len(feature_names)
+    if feature_count == 0:
+        return {"spam": pd.DataFrame(columns=["feature", "weight"]), "ham": pd.DataFrame(columns=["feature", "weight"])}
 
-    top_positive_idx = coefs.argsort()[-top_n:][::-1]
-    top_negative_idx = coefs.argsort()[:top_n]
+    text_coefs = coefs[:feature_count]
+    effective_top_n = max(1, min(top_n, feature_count))
+
+    top_positive_idx = text_coefs.argsort()[-effective_top_n:][::-1]
+    top_negative_idx = text_coefs.argsort()[:effective_top_n]
 
     top_positive = pd.DataFrame(
-        {"feature": feature_names[top_positive_idx], "weight": coefs[top_positive_idx]}
+        {"feature": feature_names[top_positive_idx], "weight": text_coefs[top_positive_idx]}
     )
     top_negative = pd.DataFrame(
-        {"feature": feature_names[top_negative_idx], "weight": coefs[top_negative_idx]}
+        {"feature": feature_names[top_negative_idx], "weight": text_coefs[top_negative_idx]}
     )
 
     return {
         "spam": top_positive.reset_index(drop=True),
         "ham": top_negative.reset_index(drop=True),
     }
-
